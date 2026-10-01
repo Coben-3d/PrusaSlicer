@@ -360,6 +360,11 @@ set(SLIC3R_GUI_SOURCES
     Utils/Jwt.hpp
     Utils/Moonraker.cpp
     Utils/Moonraker.hpp
+    Utils/LoadedFilamentColorConfig.cpp
+    Utils/LoadedFilamentColor.cpp
+    Utils/LoadedFilamentColor.hpp
+    Utils/LoadedFilamentColorRequest.cpp
+    Utils/LoadedFilamentColorRequest.hpp
     Utils/OctoPrint.cpp
     Utils/OctoPrint.hpp
     Utils/Duet.cpp
@@ -463,11 +468,12 @@ target_link_libraries(
     OpenGL::GL
     hidapi
     libcurl
-    ${wxWidgets_LIBRARIES}
+    wxWidgets::wxWidgets
     NanoSVG::nanosvg
     NanoSVG::nanosvgrast
     stb_dxt
     fastfloat
+    nlohmann_json::nlohmann_json
     boost_headeronly
 )
 

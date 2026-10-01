@@ -2167,6 +2167,7 @@ void Plater::priv::delete_all_objects_from_model()
 
 void Plater::priv::reset()
 {
+    sidebar->cancel_filament_color_sync();
     Plater::TakeSnapshot snapshot(q, _L("Reset Project"), UndoRedo::SnapshotType::ProjectSeparator);
 
 	clear_warnings();

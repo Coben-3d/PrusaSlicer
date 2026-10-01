@@ -17,12 +17,16 @@
 #ifndef slic3r_Sidebar_hpp_
 #define slic3r_Sidebar_hpp_
 
+#include <atomic>
+#include <memory>
+#include <functional>
 #include <vector>
 #include <string>
 
 #include <wx/panel.h>
 #include <wx/string.h>
 #include <wx/sizer.h>
+#include <wx/timer.h>
 
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/SLA/Workflows.hpp"
@@ -30,6 +34,7 @@
 #include "Event.hpp"
 
 class wxButton;
+class wxStaticText;
 class wxScrolledWindow;
 class ScalableButton;
 class ModeSizer;
@@ -94,6 +99,16 @@ class Sidebar : public wxPanel
     wxButton* m_btn_connect_gcode_all               { nullptr };
 	ScalableButton* m_btn_export_all_gcode_removable{ nullptr };
 
+    wxButton*                           m_btn_filament_color_sync { nullptr };
+    wxStaticText*                       m_filament_color_sync_status { nullptr };
+    wxTimer                             m_filament_color_sync_timer;
+    std::function<void()>                m_filament_color_sync_complete;
+    std::shared_ptr<std::atomic_bool>    m_filament_color_sync_cancelled;
+    size_t                              m_filament_color_sync_generation = 0;
+    bool can_sync_filament_color() const;
+    void update_filament_color_sync_state();
+    void sync_filament_color();
+
     wxButton*                           m_btn_full_spectrum { nullptr };
     std::unique_ptr<FreqChangedParams>  m_frequently_changed_parameters;
     std::unique_ptr<ObjectManipulation> m_object_manipulation;
@@ -156,6 +171,7 @@ public:
     void collapse(bool collapse);
     void set_extruders_count(size_t extruders_count);
 
+    void cancel_filament_color_sync();
     void update_mode();
     void update_ui_from_settings();
     void update_objects_list_extruder_column(size_t extruders_count);

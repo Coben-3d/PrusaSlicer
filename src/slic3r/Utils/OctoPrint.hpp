@@ -12,6 +12,7 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "PrintHost.hpp"
+#include "LoadedFilamentColorRequest.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 
@@ -73,6 +74,9 @@ public:
     wxString get_test_ok_msg() const override;
     wxString get_test_failed_msg(wxString& msg) const override;
     virtual PrintHostPostUploadActions get_post_upload_actions() const override { return PrintHostPostUploadAction::StartPrint; }
+
+    Http::Ptr get_loaded_filament_color(FilamentColorCallback callback,
+                                       std::shared_ptr<std::atomic_bool> cancelled) const;
 
     // gets possible storage to be uploaded to. This allows different printer to have different storage. F.e. local vs sdcard vs usb.
     bool get_storage(wxArrayString& storage_path, wxArrayString& storage_name) const override;

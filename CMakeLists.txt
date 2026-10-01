@@ -484,6 +484,8 @@ find_package(GLEW REQUIRED)
 
 # Find the Cereal serialization library
 find_package(cereal REQUIRED)
+# Shared by the core, local PrusaLink color client and its protocol tests.
+find_package(nlohmann_json REQUIRED)
 add_library(libcereal INTERFACE)
 if (NOT TARGET cereal::cereal)
     target_link_libraries(libcereal INTERFACE cereal)

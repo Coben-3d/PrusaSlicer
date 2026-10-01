@@ -155,6 +155,10 @@ public:
 	Http& cookie_jar(const std::string& file_path);
 	Http& set_referer(const std::string& referer);
 
+    // Keep credentials on the configured host and out of curl debug traces.
+    Http& follow_redirects(bool enabled);
+    Http& sensitive(bool enabled);
+
 	// Starts performing the request in a background thread
 	Ptr perform(const HttpRetryOpt& retry_opts = HttpRetryOpt::no_retry());
 	// Starts performing the request on the current thread

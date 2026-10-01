@@ -129,6 +129,8 @@ struct Http::priv
 	std::string error_buffer;    // Used for CURLOPT_ERRORBUFFER
 	size_t limit;
 	bool cancel;
+    bool follow_redirects = true;
+    bool sensitive = false;
     std::unique_ptr<fs::ifstream> putFile;
 
 	std::thread io_thread;
@@ -367,7 +369,7 @@ void Http::priv::http_perform(const HttpRetryOpt& retry_opts)
     static thread_local std::mt19937 generator;
     std::uniform_int_distribution<std::chrono::milliseconds::rep> randomized_delay(retry_opts.initial_delay.count(), (retry_opts.initial_delay.count() * 3) / 2);
 
-	::curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	::curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, follow_redirects ? 1L : 0L);
 	::curl_easy_setopt(curl, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
 	::curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writecb);
 	::curl_easy_setopt(curl, CURLOPT_WRITEDATA, static_cast<void*>(this));
@@ -385,7 +387,7 @@ void Http::priv::http_perform(const HttpRetryOpt& retry_opts)
 	::curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, static_cast<void*>(this));
 #endif
 
-	::curl_easy_setopt(curl, CURLOPT_VERBOSE, get_logging_level() >= 5);
+	::curl_easy_setopt(curl, CURLOPT_VERBOSE, !sensitive && get_logging_level() >= 5);
 
     std::string header_data;
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headercb);
@@ -694,6 +696,18 @@ Http& Http::cookie_jar(const std::string& file_path)
 		::curl_easy_setopt(p->curl, CURLOPT_COOKIEJAR, file_path.c_str());
 	}
 	return *this;
+}
+
+Http& Http::follow_redirects(bool enabled)
+{
+    if (p) p->follow_redirects = enabled;
+    return *this;
+}
+
+Http& Http::sensitive(bool enabled)
+{
+    if (p) p->sensitive = enabled;
+    return *this;
 }
 
 Http::Ptr Http::perform(const HttpRetryOpt& retry_opts)

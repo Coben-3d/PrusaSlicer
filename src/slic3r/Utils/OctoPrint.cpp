@@ -587,6 +587,14 @@ wxString PrusaLink::get_test_failed_msg(wxString& msg) const
     return GUI::format_wxstr("%s: %s", _L("Could not connect to PrusaLink"), msg);
 }
 
+Http::Ptr PrusaLink::get_loaded_filament_color(FilamentColorCallback callback,
+                                              std::shared_ptr<std::atomic_bool> cancelled) const
+{
+    auto http = Http::get(make_url("api/v1/filaments"));
+    set_auth(http);
+    return request_loaded_filament_color(std::move(http), std::move(callback), std::move(cancelled));
+}
+
 bool PrusaLink::validate_version_text(const boost::optional<std::string>& version_text) const
 {
     return version_text ? (boost::starts_with(*version_text, "PrusaLink") || boost::starts_with(*version_text, "OctoPrint")) : false;

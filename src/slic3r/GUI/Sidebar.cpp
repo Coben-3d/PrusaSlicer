@@ -23,11 +23,15 @@
 
 #include <cstddef>
 #include <string>
+#include <future>
+#include <chrono>
 #include <boost/algorithm/string.hpp>
 
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/button.h>
+#include <wx/secretstore.h>
+#include "slic3r/Utils/OctoPrint.hpp"
 #include <wx/bmpcbox.h>
 #include <wx/statbox.h>
 #include <wx/statbmp.h>
@@ -323,6 +327,7 @@ void Sidebar::show_preset_comboboxes()
     for (size_t i = 5; i < 9; ++i)
         m_presets_sizer->Show(i, showSLA);
 
+    update_filament_color_sync_state();
     m_frequently_changed_parameters->Show(!showSLA);
 
     const Tab* tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
@@ -446,6 +451,22 @@ Sidebar::Sidebar(Plater *parent)
 
     m_filaments_sizer = new wxBoxSizer(wxVERTICAL);
 
+    m_filament_color_sync_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        // Copy before invocation: completion or cancellation clears the stored closure.
+        auto complete = m_filament_color_sync_complete;
+        if (complete) complete();
+    }, m_filament_color_sync_timer.GetId());
+    m_btn_filament_color_sync = new wxButton(m_presets_panel, wxID_ANY, _L("Sync color from PrusaLink"));
+    m_btn_filament_color_sync->SetToolTip(_L("Read the declared color of the single loaded spool. Only the extruder display color changes."));
+    m_btn_filament_color_sync->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { sync_filament_color(); });
+    m_btn_filament_color_sync->Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) {
+        event.Enable(!m_filament_color_sync_cancelled && can_sync_filament_color());
+    });
+    m_filament_color_sync_status = new wxStaticText(m_presets_panel, wxID_ANY, wxEmptyString);
+    m_filament_color_sync_status->SetFont(wxGetApp().small_font());
+    m_btn_filament_color_sync->Enable(false);
+
     const int margin_5 = int(0.5 * wxGetApp().em_unit());// 5;
 
     auto init_combo = [this, margin_5](PlaterPresetComboBox **combo, wxString label, Preset::Type preset_type, bool filament) {
@@ -487,7 +508,12 @@ Sidebar::Sidebar(Plater *parent)
 #endif // __WXGTK3__
             (*combo)->set_extruder_idx(0);
             sizer_filaments->ShowItems(false);
-            sizer_presets->Add(sizer_filaments, 1, wxEXPAND);
+            // Keep the outer preset indices and the filament-row indices stable.
+            auto* filament_section = new wxBoxSizer(wxVERTICAL);
+            filament_section->Add(sizer_filaments, 1, wxEXPAND);
+            filament_section->Add(m_btn_filament_color_sync, 0, wxEXPAND | wxTOP, margin_5);
+            filament_section->Add(m_filament_color_sync_status, 0, wxEXPAND | wxTOP, margin_5);
+            sizer_presets->Add(filament_section, 1, wxEXPAND);
         }
     };
 
@@ -747,7 +773,149 @@ Sidebar::Sidebar(Plater *parent)
     });
 }
 
-Sidebar::~Sidebar() {}
+Sidebar::~Sidebar()
+{
+    if (m_filament_color_sync_cancelled) m_filament_color_sync_cancelled->store(true);
+    m_filament_color_sync_timer.Stop();
+    m_filament_color_sync_complete = {};
+}
+
+bool Sidebar::can_sync_filament_color() const
+{
+    const auto& bundle = *wxGetApp().preset_bundle;
+    if (bundle.printers.get_edited_preset().printer_technology() != ptFFF ||
+        m_combos_filament.size() != 1 || !m_plater->model().virtual_extruders.empty() ||
+        !bundle.physical_printers.has_selection())
+        return false;
+    const auto& config = bundle.physical_printers.get_selected_printer().config;
+    const auto* host_type = config.option<ConfigOptionEnum<PrintHostType>>("host_type");
+    const auto* nozzles = bundle.printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    return host_type && host_type->value == htPrusaLink && nozzles && nozzles->values.size() == 1 &&
+           !config.opt_string("print_host").empty();
+}
+
+void Sidebar::update_filament_color_sync_state()
+{
+    if (!m_btn_filament_color_sync) return;
+    if (m_filament_color_sync_cancelled) {
+        m_filament_color_sync_timer.Stop();
+        m_filament_color_sync_complete = {};
+        m_filament_color_sync_cancelled->store(true);
+        m_filament_color_sync_cancelled.reset();
+        ++m_filament_color_sync_generation;
+        m_filament_color_sync_status->SetLabel(_L("Selection changed; sync cancelled."));
+    }
+    m_btn_filament_color_sync->SetLabel(_L("Sync color from PrusaLink"));
+    m_btn_filament_color_sync->Enable(can_sync_filament_color());
+}
+
+void Sidebar::cancel_filament_color_sync()
+{
+    update_filament_color_sync_state();
+}
+
+void Sidebar::sync_filament_color()
+{
+    if (!can_sync_filament_color() || m_filament_color_sync_cancelled) return;
+    auto& bundle = *wxGetApp().preset_bundle;
+    const std::string printer_name = bundle.physical_printers.get_selected_full_printer_name();
+    const DynamicPrintConfig physical_config = bundle.physical_printers.get_selected_printer().config;
+    DynamicPrintConfig request_config = physical_config;
+    // Resolve an existing stored password into a temporary copy only.
+    if (request_config.opt_string("printhost_password") == "stored") {
+#if wxUSE_SECRETSTORE
+        wxSecretStore store = wxSecretStore::GetDefault();
+        wxString username;
+        wxSecretValue password;
+        const wxString service = format_wxstr(L"%1%/PhysicalPrinter/%2%/printhost_password",
+                                              SLIC3R_APP_NAME, bundle.physical_printers.get_selected_printer().name);
+        if (!store.IsOk() || !store.Load(service, username, password)) {
+            m_filament_color_sync_status->SetLabel(_L("Cannot read the configured credentials."));
+            Layout();
+            return;
+        }
+        request_config.opt_string("printhost_user") = into_u8(username);
+        request_config.opt_string("printhost_password") = into_u8(password.GetAsString());
+#else
+        m_filament_color_sync_status->SetLabel(_L("Cannot read the configured credentials."));
+        return;
+#endif
+    }
+    const DynamicPrintConfig original_config = bundle.full_config();
+    const ObjectID model_id = m_plater->model().id();
+    const std::string project_name = into_u8(m_plater->get_project_filename());
+    std::vector<ObjectID> object_ids;
+    for (const auto* object : m_plater->model().objects) object_ids.push_back(object->id());
+    auto cancelled = std::make_shared<std::atomic_bool>(false);
+    m_filament_color_sync_cancelled = cancelled;
+    const size_t generation = ++m_filament_color_sync_generation;
+    m_btn_filament_color_sync->Enable(false);
+    m_btn_filament_color_sync->SetLabel(_L("Reading color…"));
+    m_filament_color_sync_status->SetLabel(wxEmptyString);
+    // The worker never calls wxWidgets. Poll its future from a UI-owned timer;
+    // closing the window stops the timer and discards the completion safely.
+    auto promise = std::make_shared<std::promise<FilamentColorResult>>();
+    auto future = std::make_shared<std::future<FilamentColorResult>>(promise->get_future());
+    m_filament_color_sync_complete = [this, cancelled, future, generation, printer_name, physical_config,
+                                     original_config, model_id, project_name, object_ids]() {
+        if (future->wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+        m_filament_color_sync_timer.Stop();
+        m_filament_color_sync_complete = {};
+        if (cancelled->load() || m_filament_color_sync_generation != generation) return;
+        const FilamentColorResult result = future->get();
+        this->m_filament_color_sync_cancelled.reset();
+        this->update_filament_color_sync_state();
+        auto& bundle = *wxGetApp().preset_bundle;
+        std::vector<ObjectID> current_ids;
+        for (const auto* object : this->m_plater->model().objects) current_ids.push_back(object->id());
+        if (!this->can_sync_filament_color() ||
+            bundle.physical_printers.get_selected_full_printer_name() != printer_name ||
+            bundle.physical_printers.get_selected_printer().config != physical_config ||
+            bundle.full_config() != original_config || this->m_plater->model().id() != model_id ||
+            into_u8(this->m_plater->get_project_filename()) != project_name || current_ids != object_ids) {
+            this->m_filament_color_sync_status->SetLabel(_L("Project or selection changed; color kept."));
+        } else if (result.error != FilamentColorError::None) {
+            wxString message;
+            switch (result.error) {
+            case FilamentColorError::Authentication: message = _L("PrusaLink authentication failed."); break;
+            case FilamentColorError::Unsupported: message = _L("This firmware does not expose loaded colors."); break;
+            case FilamentColorError::Transport: message = _L("PrusaLink unreachable or request failed."); break;
+            default: message = _L("Invalid loaded-color response; color kept."); break;
+            }
+            this->m_filament_color_sync_status->SetLabel(message);
+        } else if (!result.filament.color) {
+            this->m_filament_color_sync_status->SetLabel(_L("Loaded color unknown; current color kept."));
+        } else {
+            Tab* tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+            DynamicPrintConfig updated = *tab->get_config();
+            if (apply_loaded_filament_color(updated, result.filament)) {
+                // Same edited-config path as the existing extruder color picker.
+                tab->load_config(updated);
+                this->update_all_filament_comboboxes();
+                this->m_plater->on_config_change(updated);
+            }
+            this->m_filament_color_sync_status->SetLabel(
+                format_wxstr(_L("Declared loaded color: %1%"), *result.filament.color));
+        }
+        this->Layout();
+        this->m_scrolled_panel->FitInside();
+    };
+    m_filament_color_sync_timer.Start(50);
+    try {
+        PrusaLink host(&request_config);
+        host.get_loaded_filament_color([promise](FilamentColorResult result) {
+            promise->set_value(std::move(result));
+        }, cancelled);
+    } catch (const std::exception&) {
+        cancelled->store(true);
+        m_filament_color_sync_timer.Stop();
+        m_filament_color_sync_complete = {};
+        m_filament_color_sync_cancelled.reset();
+        update_filament_color_sync_state();
+        m_filament_color_sync_status->SetLabel(_L("PrusaLink unreachable or request failed."));
+        Layout();
+    }
+}
 
 void Sidebar::init_filament_combo(PlaterPresetComboBox** combo, int extr_idx)
 {
@@ -842,6 +1010,7 @@ void Sidebar::update_all_preset_comboboxes()
 void Sidebar::update_printer_presets_combobox()
 {
     m_combo_printer->update();
+    update_filament_color_sync_state();
     Layout();
 }
 
@@ -893,6 +1062,8 @@ void Sidebar::update_presets(Preset::Type preset_type)
     default: break;
     }
 
+    update_filament_color_sync_state();
+
     // Synchronize config.ini with the current selections.
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
 }
@@ -932,6 +1103,7 @@ void Sidebar::on_select_preset(wxCommandEvent& evt)
     std::string last_selected_ph_printer_name = combo->get_selected_ph_printer_name();
 
     bool select_preset = !combo->selection_is_changed_according_to_physical_printers();
+    update_filament_color_sync_state();
     // TODO: ?
     if (preset_type == Preset::TYPE_FILAMENT) {
         wxGetApp().preset_bundle->set_filament_preset(idx, preset_name);
@@ -1632,6 +1804,7 @@ void Sidebar::set_extruders_count(size_t extruders_count)
 
     // remove unused choices if any
     remove_unused_filament_combos(extruders_count);
+    update_filament_color_sync_state();
 
     if (m_btn_full_spectrum && m_presets_sizer) {
         m_presets_sizer->Show(size_t(4), int(extruders_count) >= 2);

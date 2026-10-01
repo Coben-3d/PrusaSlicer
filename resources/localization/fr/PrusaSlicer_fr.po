@@ -31545,3 +31545,51 @@ msgstr "erreur zlib %d"
 #: ../src/richtext/richtextbulletspage.cpp:288
 msgid "~"
 msgstr "~"
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Sync color from PrusaLink"
+msgstr "Synchroniser la couleur (PrusaLink)"
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Read the declared color of the single loaded spool. Only the extruder display color changes."
+msgstr "Lire la couleur déclarée de la bobine chargée. Seule la couleur affichée de l’extrudeur change."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Selection changed; sync cancelled."
+msgstr "Sélection modifiée : synchronisation annulée."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Cannot read the configured credentials."
+msgstr "Impossible de lire les identifiants configurés."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Reading color…"
+msgstr "Lecture de la couleur…"
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Project or selection changed; color kept."
+msgstr "Projet ou sélection modifié : couleur conservée."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "PrusaLink authentication failed."
+msgstr "Échec de l’authentification PrusaLink."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "This firmware does not expose loaded colors."
+msgstr "Ce firmware ne fournit pas la couleur chargée."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "PrusaLink unreachable or request failed."
+msgstr "PrusaLink inaccessible ou requête échouée."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Invalid loaded-color response; color kept."
+msgstr "Réponse de couleur invalide : couleur conservée."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Loaded color unknown; current color kept."
+msgstr "Couleur chargée inconnue : couleur actuelle conservée."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Declared loaded color: %1%"
+msgstr "Couleur chargée déclarée : %1%"
