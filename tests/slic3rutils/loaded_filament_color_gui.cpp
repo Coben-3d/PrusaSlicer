@@ -6,6 +6,7 @@
 #include <wx/eventfilter.h>
 #include <wx/button.h>
 #include <wx/timer.h>
+#include <wx/dialog.h>
 #include <nlohmann/json.hpp>
 #include "PrusaSlicer.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -23,7 +24,7 @@ static wxButton* find_sync_button(wxWindow* parent)
 {
     for (wxWindow* child : parent->GetChildren()) {
         if (auto* button = dynamic_cast<wxButton*>(child);
-            button && button->GetLabel() == _L("Sync color from PrusaLink")) return button;
+            button && button->GetLabel() == _L("Sync filament from PrusaLink")) return button;
         if (auto* button = find_sync_button(child)) return button;
     }
     return nullptr;
@@ -33,6 +34,11 @@ class ColorTest : public wxEvtHandler, public wxEventFilter {
     std::unique_ptr<wxTimer> m_timer;
     wxButton* m_button = nullptr;
     DynamicPrintConfig m_before;
+    DynamicPrintConfig m_printer_before;
+    DynamicPrintConfig m_print_before;
+    DynamicPrintConfig m_filament_before;
+    std::string m_filament_name_before;
+    bool m_dialog_cancelled = false;
     bool m_started = false;
     bool m_stale_edit_done = false;
     std::string m_request_seen;
@@ -48,6 +54,13 @@ public:
     }
     int FilterEvent(wxEvent& event) override
     {
+        if (m_started && (m_mode == "material_cancel" || m_mode == "material_ambiguous") &&
+            event.GetEventType() == wxEVT_INIT_DIALOG) {
+            if (auto* dialog = dynamic_cast<wxDialog*>(event.GetEventObject())) {
+                m_dialog_cancelled = true;
+                wxTheApp->CallAfter([dialog]() { if (dialog->IsModal()) dialog->EndModal(wxID_CANCEL); });
+            }
+        }
         if (!m_started && event.GetEventType() == wxEVT_IDLE && wxGetApp().initialized()) {
             m_started = true;
             wxTheApp->CallAfter([this]() { start(); });
@@ -78,6 +91,21 @@ public:
         }
         // Initialize the normal background-process temp path before closing an empty model.
         app.plater()->update(static_cast<unsigned int>(Plater::UpdateParams::FORCE_BACKGROUND_PROCESSING_UPDATE));
+        if (m_mode == "material_keep" || m_mode == "material_cancel") {
+            auto tuned = *app.get_tab(Preset::TYPE_FILAMENT)->get_config();
+            tuned.set_key_value("temperature", new ConfigOptionInts({233}));
+            app.get_tab(Preset::TYPE_FILAMENT)->load_config(tuned);
+            app.plater()->on_config_change(bundle.full_config());
+        }
+        if (m_mode == "material_ambiguous") {
+            for (auto& preset : bundle.filaments.get_presets())
+                if (preset.name.compare(0, 11, "Generic PLA") == 0)
+                    bundle.filaments.find_preset(preset.name, false)->is_visible = false;
+        }
+        m_printer_before = bundle.printers.get_edited_preset().config;
+        m_print_before = bundle.prints.get_edited_preset().config;
+        m_filament_before = bundle.filaments.get_edited_preset().config;
+        m_filament_name_before = bundle.filaments.get_selected_preset_name();
         m_before = bundle.full_config();
         wxCommandEvent click(wxEVT_BUTTON, m_button->GetId());
         click.SetEventObject(m_button);
@@ -91,7 +119,7 @@ public:
     {
         const auto elapsed = std::chrono::steady_clock::now() - m_start;
         if (elapsed > std::chrono::seconds(12)) { finish(false, "GUI timeout"); return; }
-        if (m_mode == "stale" && !m_stale_edit_done) {
+        if ((m_mode == "stale" || m_mode == "material_stale") && !m_stale_edit_done) {
             // The test server signals receipt, so this exercises a truly late response.
             if (m_request_seen.empty() || !std::filesystem::exists(m_request_seen)) return;
             auto& app = wxGetApp();
@@ -101,13 +129,37 @@ public:
             app.plater()->on_config_change(updated);
             m_stale_edit_done = true;
         }
-        if (m_mode == "stale" && elapsed < std::chrono::seconds(3)) return;
+        if ((m_mode == "stale" || m_mode == "material_stale") && elapsed < std::chrono::seconds(3)) return;
         if (!m_button->IsEnabled()) return;
+        for (wxWindow* window : wxTopLevelWindows)
+            if (auto* dialog = dynamic_cast<wxDialog*>(window); dialog && dialog->IsModal()) return;
         const auto after = wxGetApp().preset_bundle->full_config();
         const auto diff = after.diff(m_before);
         const auto color = after.option<ConfigOptionStrings>("extruder_colour")->values.front();
         bool success;
-        if (m_mode == "unknown" || m_mode == "error") success = after == m_before;
+        if (m_mode.compare(0, 9, "material_") == 0) {
+            const auto& bundle = *wxGetApp().preset_bundle;
+            if (m_mode == "material_switch" || m_mode == "material_unknown") {
+                const auto* expected = bundle.filaments.find_preset("Generic PLA @PGIS", false);
+                success = expected && bundle.filaments.get_selected_preset_name() == expected->name &&
+                    bundle.extruders_filaments.front().get_selected_preset_name() == expected->name &&
+                    bundle.filaments.get_edited_preset().config == expected->config &&
+                    bundle.prints.get_edited_preset().config == m_print_before &&
+                    bundle.printers.get_edited_preset().config.diff(m_printer_before) ==
+                        (m_mode == "material_unknown" ? std::vector<std::string>{} : std::vector<std::string>{"extruder_colour"}) &&
+                    color == (m_mode == "material_unknown" ? "#0000FF" : "#FF0000");
+            } else if (m_mode == "material_cancel" || m_mode == "material_ambiguous") {
+                success = m_dialog_cancelled && after == m_before &&
+                    bundle.filaments.get_selected_preset_name() == m_filament_name_before &&
+                    bundle.extruders_filaments.front().get_selected_preset_name() == m_filament_name_before;
+            } else {
+                success = bundle.filaments.get_edited_preset().config == m_filament_before &&
+                    bundle.filaments.get_selected_preset_name() == m_filament_name_before &&
+                    diff == std::vector<std::string>{"extruder_colour"} &&
+                    color == (m_mode == "material_stale" ? "#00FF00" : "#FF0000");
+            }
+        }
+        else if (m_mode == "unknown" || m_mode == "error") success = after == m_before;
         else success = diff == std::vector<std::string>{"extruder_colour"} &&
                        color == (m_mode == "stale" ? "#00FF00" : m_mode == "black" ? "#000000" : "#FF0000");
         finish(success, "Color=" + color + "; changed keys=" + std::to_string(diff.size()));

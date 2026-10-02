@@ -62,6 +62,12 @@ def server():
             elif mode == "white": body = declaration("#ffffff")
             elif mode == "red": body = declaration("#FF0000")
             elif mode == "unknown": body = declaration(None)
+            elif mode == "material_none":
+                body = declaration("#FF0000")
+                body["slots"][0]["material"] = None
+            elif mode == "material_missing":
+                body = declaration("#FF0000")
+                body["slots"][0]["material"] = "NO_MATCH"
             elif mode == "future": body["schema_version"] = 2
             elif mode == "multi": body["slots"].append(body["slots"][0])
             elif mode == "malformed": body = "<html>failure</html>"

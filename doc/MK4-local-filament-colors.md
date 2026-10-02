@@ -1,4 +1,4 @@
-# Prototype local : couleur chargée sur MK4
+# Prototype local : filament chargé sur MK4
 
 Base : PrusaSlicer **2.9.6**, tag `version_2.9.6`, commit
 `b028299c770b8380ee81c921a2867d522f288123`. Branche locale :
@@ -6,12 +6,15 @@ Base : PrusaSlicer **2.9.6**, tag `version_2.9.6`, commit
 
 Le firmware Buddy associé est le prototype `6.5.7-color+4`, commit
 `95cfcf359236be6cb49e9e467fb50689fdcf3281`. Sa route est une extension du
-prototype, absente du firmware officiel. La validation utilise exclusivement
-une API factice sur localhost et un MK4 virtuel Mini404.
+prototype, absente du firmware officiel. Les tests automatisés utilisent une API factice sur localhost et un MK4 virtuel
+Mini404. Un essai réel a ensuite été autorisé : Benjamin rapporte le démarrage,
+le chargement violet et la synchronisation locale réussis. La persistance après
+redémarrage reste à vérifier ; aucune réponse authentifiée réelle n’a été lue
+directement par l’agent.
 
 ## Comportement
 
-Le bouton **Synchroniser la couleur (PrusaLink)** apparaît sous la ligne du
+Le bouton **Synchroniser le filament (PrusaLink)** apparaît sous la ligne du
 filament. Il est actif pour une imprimante FFF à une seule buse, sans extrudeurs
 virtuels, avec une imprimante physique sélectionnée et `host_type=PrusaLink`.
 L'adresse, la clé API ou les identifiants Digest et le certificat sont ceux de
@@ -36,14 +39,34 @@ Le seul contrat accepté pour ce prototype est :
 est bien le noir. Les hexadécimaux sont normalisés en majuscules. Les versions
 inconnues, slots multiples, indices autres que 0, clés répétées, types
 incorrects et couleurs invalides sont refusés sans changement de couleur.
-`material` peut être une chaîne ou null ; il reste une information déclarée
-et ne sélectionne jamais un profil de matière.
+`material` peut être une chaîne ou null : c’est la matière déclarée par
+l’opérateur, sans information de marque. Elle synchronise désormais la liste
+Filament :
 
-Une couleur valide modifie uniquement `extruder_colour[0]`, par le même chemin
+- un profil compatible déjà du même type est conservé, avec ses réglages édités ;
+- sinon, un unique profil système **Generic <type>** compatible avec l’extrudeur
+  et le profil d’impression est sélectionné ;
+- si plusieurs choix restent possibles ou aucun profil générique n’est unique,
+  une fenêtre propose les profils compatibles du type exact, sans deviner la marque ;
+- une matière inconnue ou sans profil installé compatible conserve le profil
+  actuel et affiche cette limite. La couleur peut toujours être synchronisée.
+
+Le type est comparé exactement à `filament_type[0]` : aucun rapprochement entre
+PLA et PLA+, aucun profil incompatible, invisible ou par défaut n’est choisi.
+Le changement utilise le chemin normal de la liste Filament et ses confirmations
+Save / Discard / Transfer / Cancel. Annuler la sélection ou le traitement d’un
+profil édité conserve le profil et la couleur. Un changement accepté sélectionne
+le **profil entier**, donc ses températures et autres paramètres d’impression ;
+il ne remplace pas seulement l’étiquette du type de matière.
+
+La partie couleur modifie uniquement `extruder_colour[0]`, par le même chemin
 que le sélecteur de couleur existant : configuration éditée du preset
-imprimante, rafraîchissement des listes et de la vue. Le profil de filament,
-les températures, la buse, les autres réglages et les fichiers de presets
-sauvegardés sont conservés. Une modification de couleur marque donc le
+imprimante, rafraîchissement des listes et de la vue. Si le profil de filament
+reste le même, ses températures et tous ses paramètres sont conservés. La
+sélection d’un autre profil applique ses paramètres complets. La buse, le profil
+d’impression et les fichiers de presets sauvegardés ne sont pas modifiés par
+la synchronisation elle-même ; une sauvegarde de réglages édités reste une
+action explicite du dialogue normal de Slicer. Une modification de couleur marque donc le
 preset imprimante **édité** comme modifié ; aucun preset n'est sauvegardé
 automatiquement. Elle peut être conservée dans le projet 3MF comme le choix
 manuel existant. Ce chemin n'ajoute pas un Undo/Redo de réglages : la pile
@@ -61,18 +84,53 @@ d'objets sont comparés à leur état au clic. Une réponse tardive ne doit pas
 | Composant | Fichiers | Rôle |
 |---|---|---|
 | Protocole | `src/slic3r/Utils/LoadedFilamentColor.{hpp,cpp}` | Parseur strict, noir/inconnu, schéma mono-bobine |
-| Application | `LoadedFilamentColorConfig.cpp` | Une seule option de couleur modifiée |
+| Application | `LoadedFilamentColorConfig.cpp` | Couleur et résolution des profils de matière compatibles |
 | Réseau | `LoadedFilamentColorRequest.{hpp,cpp}`, `OctoPrint.{hpp,cpp}` | GET local réutilisant `PrusaLink::set_auth` |
 | HTTP | `Http.{hpp,cpp}` | Options de refus de redirection et traces sensibles ; valeurs par défaut existantes conservées |
 | Interface | `GUI/Sidebar.{hpp,cpp}`, `GUI/Plater.cpp` | Bouton, statut, timer et annulation lors du reset de projet |
-| Compilation | `CMakeLists.txt`, `src/slic3r/CMakeLists.txt`, `version.inc` | JSON partagé et identification `MK4-ColorLocal` |
-| Français | Catalogues PO/POT et MO français | 12 libellés ajoutés, traductions préexistantes conservées |
+| Compilation | `CMakeLists.txt`, `src/slic3r/CMakeLists.txt`, `version.inc` | JSON partagé et identification `MK4-FilamentLocal` |
+| Français | Catalogues PO/POT et MO français | Libellés couleur et matière ajoutés, traductions préexistantes conservées |
 | Tests | `tests/slic3rutils/loaded_filament_color_*`, `test_loaded_filament_color_*.py` | Protocole, conservation des réglages, mocks HTTP et firmware virtuel |
+
+## Validation de la synchronisation matière
+
+La version `PrusaSlicer-2.9.6+MK4-FilamentLocal` est compilée en arm64 avec STEP
+actif et les dépendances déjà présentes sur le SSD. Les nouveaux contrôles
+passent :
+
+| Contrôle | Résultat | Preuve dans `artifacts/` |
+|---|---|---|
+| CTest : protocole et choix de profil | 2 cibles, 0 échec ; configuration/matière 3 cas / 25 assertions | `slicer-material-ctest.log` |
+| Interface wx native, événement réel et profils Prusa officiels | 13 tests, dont PETG→PLA, PLA personnalisé à 233 °C, matière ou couleur inconnue, aucun profil, annulation du choix ambigu et du dialogue de réglages édités, réponse tardive | `slicer-material-gui.log`, `.xml` |
+| Client HTTP réel contre API factice locale | 16 tests, 0 échec | `slicer-material-http.log`, `.xml` |
+| Catalogue français | 11 libellés ajoutés ; toutes les traductions du MO précédent conservées | `slicer-material-validation.json` |
+
+Les tests de passage PETG→PLA vérifient que le profil édité entier est égal au
+profil système `Generic PLA @PGIS`, et que le profil d’impression ne change pas.
+Les tests de conservation comparent la configuration complète ; l’annulation
+du dialogue normal de réglages édités est réellement exercée. Le firmware et
+son API ne changent pas. L’essai réel de cette évolution matière reste distinct
+du succès couleur déjà déclaré par Benjamin.
+
+## Profils PrusaLink dans un dossier isolé
+
+La fenêtre Imprimante physique n’offre PrusaLink que pour un profil rattaché
+au constructeur Prusa Research. Copier uniquement les valeurs aplaties de
+MK4IS perd cette association et la fenêtre bascule alors en OctoPrint, même si
+`host_type = prusalink` était prérempli. Le dossier de test doit contenir
+`vendor/PrusaResearch.ini` officiel et le profil utilisateur complet doit garder
+`inherits = Original Prusa MK4 Input Shaper 0.4 nozzle`. Le chargement d’un
+profil utilisateur applique ses valeurs sur les valeurs par défaut ; ce champ
+d’héritage seul ne suffit pas à récupérer tous les paramètres du parent.
+
+Cette correction a été vérifiée par un test natif ouvrant le vrai dialogue
+Imprimante physique : association Prusa Research retrouvée et type PrusaLink
+conservé. Preuve : `artifacts/hardware-trial/profile-diagnostic/RESULT.json`.
 
 ## Validation et reproductibilité
 
 Le binaire natif arm64 de PrusaSlicer est compilé et lié avec STEP actif.
-Les contrôles suivants passent :
+Les contrôles de la version couleur initiale suivants ont passé :
 
 | Contrôle | Résultat | Preuve dans `artifacts/` |
 |---|---|---|
@@ -82,7 +140,7 @@ Les contrôles suivants passent :
 | Client C++ contre firmware MK4 virtuel en fonctionnement | 3 tests : noir, blanc, inconnue, déclaration EEPROM injectée | `slicer-color-firmware.log`, `.xml` |
 | Import STEP réel et export STL par le binaire livré | Cube OCCT de 10 mm importé ; STL de 12 triangles exporté | `slicer-step-smoke.log`, `step-smoke-box.step`, `.stl` |
 
-Les tests natifs comparent la configuration complète avant/après : seule
+Les tests couleur initiaux comparent la configuration complète avant/après : seule
 `extruder_colour` change pour une couleur connue ; aucun changement pour
 inconnue ou erreur. Ils vérifient aussi que le fichier du preset imprimante
 reste identique. Le test tardif attend que le serveur ait reçu la requête,

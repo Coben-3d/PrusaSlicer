@@ -1,5 +1,6 @@
 """Drive the real sidebar through native wx events using isolated local settings."""
 import json
+import configparser
 import os
 from pathlib import Path
 import shutil
@@ -15,7 +16,10 @@ ROOT = Path("/tmp/prusadev-native-20261001/build")
 
 
 @pytest.mark.parametrize("mode,endpoint", [("apply", "red"), ("black", "valid"),
-    ("unknown", "unknown"), ("error", "unsupported"), ("stale", "stale_delay")])
+    ("unknown", "unknown"), ("error", "unsupported"), ("stale", "stale_delay"),
+    ("material_switch", "red"), ("material_keep", "red"), ("material_unknown", "unknown"),
+    ("material_none", "material_none"), ("material_missing", "material_missing"),
+    ("material_cancel", "red"), ("material_ambiguous", "red"), ("material_stale", "stale_delay")])
 def test_native_sync_button(server, mode, endpoint):
     assert GUI, "Set SLICER_COLOR_GUI to the compiled native harness"
     base, seen = server
@@ -28,6 +32,25 @@ def test_native_sync_button(server, mode, endpoint):
         profile.write_text("printer_technology = FFF\nprinter_model = MK4\n"
             "nozzle_diameter = 0.4\nextruder_colour = #0000FF\n"
             "printer_settings_id = Virtual MK4\n")
+        if mode.startswith("material_"):
+            official = Path(__file__).parents[2] / "resources/profiles/PrusaResearch.ini"
+            (directory / "vendor").mkdir()
+            shutil.copyfile(official, directory / "vendor/PrusaResearch.ini")
+            vendor = configparser.ConfigParser(interpolation=None, strict=False)
+            vendor.optionxform = str
+            vendor.read(official)
+            def flatten(name):
+                section = vendor["printer:" + name]
+                values = {}
+                for parent in section.get("inherits", "").split(";"):
+                    if parent.strip(): values.update(flatten(parent.strip()))
+                values.update({k: v for k, v in section.items() if k != "inherits"})
+                return values
+            values = flatten("Original Prusa MK4 Input Shaper 0.4 nozzle")
+            values.pop("renamed_from", None)
+            values.update(inherits="Original Prusa MK4 Input Shaper 0.4 nozzle",
+                          printer_settings_id="Virtual MK4", extruder_colour="#0000FF")
+            profile.write_text("".join(k + " = " + v + "\n" for k, v in values.items()))
         original = profile.read_bytes()
         (directory / "PrusaSlicer.ini").write_text("version = 2.9.6\n"
             "translation_language = fr_FR\npreset_update = 0\n"
@@ -36,6 +59,11 @@ def test_native_sync_button(server, mode, endpoint):
             "show_hints = 0\nconnect_polling = 0\nsingle_instance = 0\nno_defaults = 0\n"
             "default_action_on_dirty_project = 0\ndefault_action_on_close_application = discard\n"
             "[presets]\nprinter = Virtual MK4\n")
+        if mode.startswith("material_"):
+            selected = "Prusament PLA @PGIS" if mode == "material_keep" else "Generic PETG @PGIS"
+            with (directory / "PrusaSlicer.ini").open("a") as ini:
+                ini.write("filament = " + selected + "\n[vendor:PrusaResearch]\nmodel:MK4IS = 0.4\n"
+                    "[filaments]\nGeneric PLA @PGIS = 1\nGeneric PETG @PGIS = 1\nPrusament PLA @PGIS = 1\n")
         env = {**os.environ, "SLICER_GUI_TEST_HOST": base + "/" + endpoint,
                "SLICER_GUI_TEST_MODE": mode, "DYLD_INSERT_LIBRARIES": isolation,
                "NO_PROXY": "127.0.0.1,localhost"}

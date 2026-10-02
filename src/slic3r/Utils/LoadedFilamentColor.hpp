@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace Slic3r {
 
@@ -14,6 +15,21 @@ struct LoadedFilamentColor {
 };
 
 class DynamicPrintConfig;
+class Preset;
+
+struct LoadedFilamentMaterialSelection {
+    bool keep_current = false;
+    std::optional<std::string> preferred_profile;
+    std::vector<std::string> candidates;
+};
+
+// Candidates supplied by the caller must be compatible with the active extruder.
+// Preserve an edited matching profile; auto-select only a unique system Generic profile.
+LoadedFilamentMaterialSelection resolve_loaded_filament_material(
+    const Preset& current, bool current_compatible,
+    const std::vector<const Preset*>& compatible_presets,
+    const std::optional<std::string>& material);
+
 // Change only the single extruder display color; no-op for unknown colors.
 bool apply_loaded_filament_color(DynamicPrintConfig& config, const LoadedFilamentColor& filament);
 

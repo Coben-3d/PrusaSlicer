@@ -31,6 +31,7 @@
 #include <wx/stattext.h>
 #include <wx/button.h>
 #include <wx/secretstore.h>
+#include <wx/choicdlg.h>
 #include "slic3r/Utils/OctoPrint.hpp"
 #include <wx/bmpcbox.h>
 #include <wx/statbox.h>
@@ -457,8 +458,8 @@ Sidebar::Sidebar(Plater *parent)
         auto complete = m_filament_color_sync_complete;
         if (complete) complete();
     }, m_filament_color_sync_timer.GetId());
-    m_btn_filament_color_sync = new wxButton(m_presets_panel, wxID_ANY, _L("Sync color from PrusaLink"));
-    m_btn_filament_color_sync->SetToolTip(_L("Read the declared color of the single loaded spool. Only the extruder display color changes."));
+    m_btn_filament_color_sync = new wxButton(m_presets_panel, wxID_ANY, _L("Sync filament from PrusaLink"));
+    m_btn_filament_color_sync->SetToolTip(_L("Read the declared material and color of the loaded spool and select a compatible filament profile."));
     m_btn_filament_color_sync->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { sync_filament_color(); });
     m_btn_filament_color_sync->Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) {
         event.Enable(!m_filament_color_sync_cancelled && can_sync_filament_color());
@@ -784,7 +785,8 @@ bool Sidebar::can_sync_filament_color() const
 {
     const auto& bundle = *wxGetApp().preset_bundle;
     if (bundle.printers.get_edited_preset().printer_technology() != ptFFF ||
-        m_combos_filament.size() != 1 || !m_plater->model().virtual_extruders.empty() ||
+        m_combos_filament.size() != 1 || bundle.extruders_filaments.size() != 1 ||
+        !m_plater->model().virtual_extruders.empty() ||
         !bundle.physical_printers.has_selection())
         return false;
     const auto& config = bundle.physical_printers.get_selected_printer().config;
@@ -805,13 +807,71 @@ void Sidebar::update_filament_color_sync_state()
         ++m_filament_color_sync_generation;
         m_filament_color_sync_status->SetLabel(_L("Selection changed; sync cancelled."));
     }
-    m_btn_filament_color_sync->SetLabel(_L("Sync color from PrusaLink"));
+    m_btn_filament_color_sync->SetLabel(_L("Sync filament from PrusaLink"));
     m_btn_filament_color_sync->Enable(can_sync_filament_color());
 }
 
 void Sidebar::cancel_filament_color_sync()
 {
     update_filament_color_sync_state();
+}
+
+bool Sidebar::sync_filament_material(const std::optional<std::string>& material, wxString& status)
+{
+    if (!material) {
+        status = _L("Loaded material unknown; filament profile kept.");
+        return true;
+    }
+    auto& bundle = *wxGetApp().preset_bundle;
+    const auto& extruder = bundle.extruders_filaments.front();
+    std::vector<const Preset*> compatible;
+    for (const auto& filament : extruder)
+        if (filament.is_compatible) compatible.push_back(filament.preset);
+    const auto* selected = extruder.get_selected_filament();
+    const auto resolution = resolve_loaded_filament_material(bundle.filaments.get_edited_preset(),
+        selected && selected->is_compatible, compatible, material);
+    if (resolution.keep_current) {
+        status = format_wxstr(_L("Loaded material: %1%. Current filament profile kept."), *material);
+        return true;
+    }
+    if (resolution.candidates.empty()) {
+        status = format_wxstr(_L("Loaded material: %1%. No compatible filament profile; current profile kept."), *material);
+        return true;
+    }
+    std::string profile;
+    if (resolution.preferred_profile) profile = *resolution.preferred_profile;
+    else {
+        wxArrayString choices;
+        for (const auto& name : resolution.candidates) choices.Add(from_u8(name));
+        wxSingleChoiceDialog dialog(this,
+            format_wxstr(_L("Choose a compatible filament profile for the loaded material %1%."), *material),
+            _L("Loaded filament"), choices);
+        if (dialog.ShowModal() != wxID_OK) {
+            status = _L("Filament synchronization cancelled; profile and color kept.");
+            return false;
+        }
+        profile = resolution.candidates.at(static_cast<size_t>(dialog.GetSelection()));
+    }
+    // Same profile-selection path as the filament dropdown, including the normal
+    // Save / Discard / Transfer / Cancel handling of an edited filament preset.
+    const std::string old_profile = extruder.get_selected_preset_name();
+    auto* tab = dynamic_cast<TabFilament*>(wxGetApp().get_tab(Preset::TYPE_FILAMENT));
+    if (!tab) {
+        status = _L("Filament profile could not be selected; current profile kept.");
+        return true;
+    }
+    bundle.set_filament_preset(0, profile);
+    if (!tab->select_preset(profile)) {
+        bundle.set_filament_preset(0, old_profile);
+        this->update_all_filament_comboboxes();
+        status = _L("Filament synchronization cancelled; profile and color kept.");
+        return false;
+    }
+    bundle.export_selections(*wxGetApp().app_config);
+    this->update_all_filament_comboboxes();
+    this->m_plater->on_config_change(bundle.full_config());
+    status = format_wxstr(_L("Loaded material: %1%. Selected profile: %2%."), *material, profile);
+    return true;
 }
 
 void Sidebar::sync_filament_color()
@@ -850,7 +910,7 @@ void Sidebar::sync_filament_color()
     m_filament_color_sync_cancelled = cancelled;
     const size_t generation = ++m_filament_color_sync_generation;
     m_btn_filament_color_sync->Enable(false);
-    m_btn_filament_color_sync->SetLabel(_L("Reading color…"));
+    m_btn_filament_color_sync->SetLabel(_L("Reading filament…"));
     m_filament_color_sync_status->SetLabel(wxEmptyString);
     // The worker never calls wxWidgets. Poll its future from a UI-owned timer;
     // closing the window stops the timer and discards the completion safely.
@@ -883,19 +943,25 @@ void Sidebar::sync_filament_color()
             default: message = _L("Invalid loaded-color response; color kept."); break;
             }
             this->m_filament_color_sync_status->SetLabel(message);
-        } else if (!result.filament.color) {
-            this->m_filament_color_sync_status->SetLabel(_L("Loaded color unknown; current color kept."));
         } else {
-            Tab* tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
-            DynamicPrintConfig updated = *tab->get_config();
-            if (apply_loaded_filament_color(updated, result.filament)) {
-                // Same edited-config path as the existing extruder color picker.
-                tab->load_config(updated);
-                this->update_all_filament_comboboxes();
-                this->m_plater->on_config_change(updated);
+            wxString material_status;
+            if (this->sync_filament_material(result.filament.material, material_status)) {
+                Tab* tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+                DynamicPrintConfig updated = *tab->get_config();
+                if (apply_loaded_filament_color(updated, result.filament)) {
+                    // Same edited-config path as the existing extruder color picker.
+                    tab->load_config(updated);
+                    this->update_all_filament_comboboxes();
+                    this->m_plater->on_config_change(updated);
+                }
+                material_status += "\n";
+                material_status += result.filament.color ?
+                    format_wxstr(_L("Declared loaded color: %1%"), *result.filament.color) :
+                    _L("Loaded color unknown; current color kept.");
             }
-            this->m_filament_color_sync_status->SetLabel(
-                format_wxstr(_L("Declared loaded color: %1%"), *result.filament.color));
+            this->m_filament_color_sync_status->SetLabel(material_status);
+            this->m_filament_color_sync_status->Wrap(std::max(120,
+                this->m_presets_panel->GetClientSize().GetWidth() - wxGetApp().em_unit()));
         }
         this->Layout();
         this->m_scrolled_panel->FitInside();

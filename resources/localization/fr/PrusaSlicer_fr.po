@@ -31593,3 +31593,51 @@ msgstr "Couleur chargée inconnue : couleur actuelle conservée."
 #: src/slic3r/GUI/Sidebar.cpp
 msgid "Declared loaded color: %1%"
 msgstr "Couleur chargée déclarée : %1%"
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Sync filament from PrusaLink"
+msgstr "Synchroniser le filament (PrusaLink)"
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Read the declared material and color of the loaded spool and select a compatible filament profile."
+msgstr "Lire la matière et la couleur déclarées de la bobine chargée et sélectionner un profil de filament compatible."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Reading filament…"
+msgstr "Lecture du filament…"
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Loaded material unknown; filament profile kept."
+msgstr "Matière chargée inconnue : profil de filament conservé."
+
+#: src/slic3r/GUI/Sidebar.cpp
+#, boost-format
+msgid "Loaded material: %1%. Current filament profile kept."
+msgstr "Matière chargée : %1%. Profil de filament actuel conservé."
+
+#: src/slic3r/GUI/Sidebar.cpp
+#, boost-format
+msgid "Loaded material: %1%. No compatible filament profile; current profile kept."
+msgstr "Matière chargée : %1%. Aucun profil de filament compatible : profil actuel conservé."
+
+#: src/slic3r/GUI/Sidebar.cpp
+#, boost-format
+msgid "Choose a compatible filament profile for the loaded material %1%."
+msgstr "Choisissez un profil de filament compatible avec la matière chargée %1%."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Loaded filament"
+msgstr "Filament chargé"
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Filament synchronization cancelled; profile and color kept."
+msgstr "Synchronisation annulée : profil et couleur conservés."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Filament profile could not be selected; current profile kept."
+msgstr "Impossible de sélectionner le profil de filament : profil actuel conservé."
+
+#: src/slic3r/GUI/Sidebar.cpp
+#, boost-format
+msgid "Loaded material: %1%. Selected profile: %2%."
+msgstr "Matière chargée : %1%. Profil sélectionné : %2%."

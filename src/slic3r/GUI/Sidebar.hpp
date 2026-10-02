@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <functional>
 #include <vector>
 #include <string>
@@ -108,6 +109,7 @@ class Sidebar : public wxPanel
     bool can_sync_filament_color() const;
     void update_filament_color_sync_state();
     void sync_filament_color();
+    bool sync_filament_material(const std::optional<std::string>& material, wxString& status);
 
     wxButton*                           m_btn_full_spectrum { nullptr };
     std::unique_ptr<FreqChangedParams>  m_frequently_changed_parameters;
