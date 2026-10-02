@@ -31641,3 +31641,23 @@ msgstr "Impossible de sélectionner le profil de filament : profil actuel conser
 #, boost-format
 msgid "Loaded material: %1%. Selected profile: %2%."
 msgstr "Matière chargée : %1%. Profil sélectionné : %2%."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "INDX tool mapping does not match this printer; settings kept."
+msgstr "La correspondance des têtes INDX ne convient pas à cette imprimante ; réglages conservés."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Tool %1%: empty or disabled; settings kept."
+msgstr "Tête %1% : vide ou désactivée ; réglages conservés."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Tool %1%: choose a compatible profile for %2%."
+msgstr "Tête %1% : choisissez un profil compatible pour %2%."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "Tool %1%: %2%, %3%."
+msgstr "Tête %1% : %2%, %3%."
+
+#: src/slic3r/GUI/Sidebar.cpp
+msgid "No compatible profile selected; current profile kept."
+msgstr "Aucun profil compatible sélectionné ; profil actuel conservé."

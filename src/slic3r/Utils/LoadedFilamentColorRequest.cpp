@@ -24,7 +24,11 @@ Http::Ptr request_loaded_filament_color(Http&& http, FilamentColorCallback callb
             if (status != 200)
                 result.error = FilamentColorError::InvalidResponse;
             else {
-                try { result.filament = parse_loaded_filament_color(body); }
+                try {
+                    result.declarations = parse_loaded_filaments(body);
+                    if (result.declarations.schema_version == 1)
+                        result.filament = result.declarations.slots.front().filament;
+                }
                 catch (const std::exception&) { result.error = FilamentColorError::InvalidResponse; }
             }
             callback(std::move(result));

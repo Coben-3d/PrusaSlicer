@@ -83,3 +83,28 @@ TEST_CASE("Loaded material auto-selects only one compatible system Generic profi
     REQUIRE(resolve_loaded_filament_material(current, true, candidates, "Unsupported material").candidates.empty());
     REQUIRE(resolve_loaded_filament_material(current, true, candidates, std::nullopt).candidates.empty());
 }
+
+
+TEST_CASE("INDX updates eight display colors without shifting disabled or empty tools", "[LoadedFilamentColor]")
+{
+    DynamicPrintConfig original = DynamicPrintConfig::full_print_config();
+    original.set_key_value("extruder_colour", new ConfigOptionStrings(std::vector<std::string>(8, "#0000FF")));
+    auto updated = original;
+    LoadedFilaments snapshot; snapshot.schema_version = 2;
+    const std::vector<std::string> rgb = {"#000000", "#FFFFFF", "#FF0000", "#00FF00", "#FFFF00", "#00FFFF", "#800080", "#123456"};
+    for (size_t i = 0; i < 8; ++i) snapshot.slots.push_back({i, true, true, {{"PLA"}, {rgb[i]}}});
+    snapshot.slots[2].enabled = false;
+    snapshot.slots[4].loaded = false;
+    snapshot.slots[6].filament.color.reset();
+    REQUIRE(apply_loaded_filament_colors(updated, snapshot));
+    REQUIRE(updated.diff(original) == std::vector<std::string>{"extruder_colour"});
+    const auto& colors = updated.option<ConfigOptionStrings>("extruder_colour")->values;
+    for (size_t i = 0; i < 8; ++i)
+        REQUIRE(colors[i] == (i == 2 || i == 4 || i == 6 ? "#0000FF" : rgb[i]));
+    REQUIRE_FALSE(apply_loaded_filament_colors(updated, snapshot));
+    std::swap(snapshot.slots[2], snapshot.slots[3]);
+    REQUIRE_FALSE(apply_loaded_filament_colors(original, snapshot));
+    REQUIRE(original.option<ConfigOptionStrings>("extruder_colour")->values == std::vector<std::string>(8, "#0000FF"));
+    auto single = DynamicPrintConfig::full_print_config();
+    REQUIRE_FALSE(apply_loaded_filament_colors(single, snapshot));
+}

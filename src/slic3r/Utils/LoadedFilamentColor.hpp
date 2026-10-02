@@ -14,6 +14,22 @@ struct LoadedFilamentColor {
     std::optional<std::string> color;
 };
 
+struct LoadedFilamentSlot {
+    size_t slot = 0; // Stable physical tool index, never the active tool.
+    bool enabled = false;
+    bool loaded = false;
+    LoadedFilamentColor filament;
+};
+
+struct LoadedFilaments {
+    unsigned schema_version = 1;
+    std::vector<LoadedFilamentSlot> slots;
+};
+
+// Schema 1 remains the MK4 single-slot protocol. Schema 2 is restricted to
+// CORE One INDX, exactly eight stable physical indices with identity mapping.
+LoadedFilaments parse_loaded_filaments(const std::string& body);
+
 class DynamicPrintConfig;
 class Preset;
 
@@ -32,6 +48,7 @@ LoadedFilamentMaterialSelection resolve_loaded_filament_material(
 
 // Change only the single extruder display color; no-op for unknown colors.
 bool apply_loaded_filament_color(DynamicPrintConfig& config, const LoadedFilamentColor& filament);
+bool apply_loaded_filament_colors(DynamicPrintConfig& config, const LoadedFilaments& filaments);
 
 // Accept only the version 1, single-slot protocol. Throws std::runtime_error
 // for invalid, ambiguous or unsupported responses. Unknown color is nullopt.

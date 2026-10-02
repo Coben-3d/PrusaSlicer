@@ -1,3 +1,4 @@
+#include <array>
 ///|/ Copyright (c) Prusa Research 2018 - 2023 Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena, Oleksandra Iushchenko @YuSanka, Enrico Turri @enricoturri1966, Tomáš Mészáros @tamasmeszaros, David Kocík @kocikdav, Lukáš Hejl @hejllukas, Pavel Mikuš @Godrak, Filip Sykala @Jony01, Vojtěch Král @vojtechkral
 ///|/ Copyright (c) 2022 Michael Kirsch
 ///|/ Copyright (c) 2021 Boleslaw Ciesielski
@@ -785,15 +786,21 @@ bool Sidebar::can_sync_filament_color() const
 {
     const auto& bundle = *wxGetApp().preset_bundle;
     if (bundle.printers.get_edited_preset().printer_technology() != ptFFF ||
-        m_combos_filament.size() != 1 || bundle.extruders_filaments.size() != 1 ||
+        m_combos_filament.size() != bundle.extruders_filaments.size() ||
         !m_plater->model().virtual_extruders.empty() ||
         !bundle.physical_printers.has_selection())
         return false;
     const auto& config = bundle.physical_printers.get_selected_printer().config;
     const auto* host_type = config.option<ConfigOptionEnum<PrintHostType>>("host_type");
     const auto* nozzles = bundle.printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-    return host_type && host_type->value == htPrusaLink && nozzles && nozzles->values.size() == 1 &&
-           !config.opt_string("print_host").empty();
+    if (!host_type || host_type->value != htPrusaLink || !nozzles || config.opt_string("print_host").empty())
+        return false;
+    const auto& printer = bundle.printers.get_edited_preset().config;
+    const bool single = nozzles->values.size() == 1 && m_combos_filament.size() == 1;
+    const bool indx = printer.opt_string("printer_model") == "COREONE_INDX8T" &&
+        nozzles->values.size() == 8 && m_combos_filament.size() == 8 &&
+        !printer.opt_bool("single_extruder_multi_material");
+    return single || indx;
 }
 
 void Sidebar::update_filament_color_sync_state()
@@ -874,6 +881,86 @@ bool Sidebar::sync_filament_material(const std::optional<std::string>& material,
     return true;
 }
 
+bool Sidebar::sync_indx_filaments(const LoadedFilaments& filaments, wxString& status)
+{
+    auto& bundle = *wxGetApp().preset_bundle;
+    auto* tab = dynamic_cast<TabFilament*>(wxGetApp().get_tab(Preset::TYPE_FILAMENT));
+    if (!tab || filaments.schema_version != 2 || filaments.slots.size() != 8 ||
+        bundle.extruders_filaments.size() != 8 ||
+        bundle.printers.get_edited_preset().config.opt_string("printer_model") != "COREONE_INDX8T") {
+        status = _L("INDX tool mapping does not match this printer; settings kept.");
+        return false;
+    }
+    const int active = tab->get_active_extruder();
+    if (active < 0 || active >= 8) return false;
+    std::array<std::string, 8> selected;
+    std::array<std::string, 8> previous;
+    wxString details;
+    // Resolve every row and complete choice dialogs before changing any preset.
+    for (size_t i = 0; i < 8; ++i) {
+        const auto& slot = filaments.slots[i];
+        if (slot.slot != i) return false;
+        const auto& extruder = bundle.extruders_filaments[i];
+        previous[i] = selected[i] = extruder.get_selected_preset_name();
+        if (!slot.enabled || !slot.loaded) {
+            details += format_wxstr(_L("Tool %1%: empty or disabled; settings kept."), i + 1) + "\n";
+            continue;
+        }
+        const auto* current = extruder.get_selected_filament();
+        if (!current || !current->preset) return false;
+        const Preset& current_preset = current->preset->name == bundle.filaments.get_edited_preset().name ?
+            bundle.filaments.get_edited_preset() : *current->preset;
+        std::vector<const Preset*> compatible;
+        for (const auto& candidate : extruder)
+            if (candidate.is_compatible) compatible.push_back(candidate.preset);
+        const auto resolution = resolve_loaded_filament_material(current_preset, current->is_compatible,
+                                                                 compatible, slot.filament.material);
+        if (!resolution.keep_current && !resolution.candidates.empty()) {
+            if (resolution.preferred_profile) selected[i] = *resolution.preferred_profile;
+            else {
+                wxArrayString choices;
+                for (const auto& name : resolution.candidates) choices.Add(from_u8(name));
+                wxSingleChoiceDialog dialog(this,
+                    format_wxstr(_L("Tool %1%: choose a compatible profile for %2%."), i + 1, *slot.filament.material),
+                    _L("Loaded filament"), choices);
+                if (dialog.ShowModal() != wxID_OK) {
+                    status = _L("Filament synchronization cancelled; profile and color kept.");
+                    return false;
+                }
+                selected[i] = resolution.candidates.at(static_cast<size_t>(dialog.GetSelection()));
+            }
+        }
+        details += format_wxstr(_L("Tool %1%: %2%, %3%."), i + 1,
+            slot.filament.material.value_or("?"), slot.filament.color.value_or("?")) + "\n";
+        if (!slot.filament.material || (!resolution.keep_current && resolution.candidates.empty()))
+            details += _L("No compatible profile selected; current profile kept.") + "\n";
+    }
+    // Only the active filament owns an edited preset. Use its normal dialog
+    // first, so Cancel keeps all eight rows and colors unchanged. Other rows
+    // follow exactly the existing dropdown's non-active selection path.
+    if (selected[active] != previous[active]) {
+        bundle.set_filament_preset(active, selected[active]);
+        if (!tab->select_preset(selected[active])) {
+            bundle.set_filament_preset(active, previous[active]);
+            update_all_filament_comboboxes();
+            status = _L("Filament synchronization cancelled; profile and color kept.");
+            return false;
+        }
+    }
+    for (size_t i = 0; i < 8; ++i)
+        if (i != static_cast<size_t>(active) && selected[i] != previous[i])
+            bundle.set_filament_preset(i, selected[i]);
+    bundle.cache_extruder_filaments_names();
+    bundle.export_selections(*wxGetApp().app_config);
+    auto* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+    DynamicPrintConfig updated = *printer_tab->get_config();
+    if (apply_loaded_filament_colors(updated, filaments)) printer_tab->load_config(updated);
+    update_all_filament_comboboxes();
+    m_plater->on_config_change(bundle.full_config());
+    status = details;
+    return true;
+}
+
 void Sidebar::sync_filament_color()
 {
     if (!can_sync_filament_color() || m_filament_color_sync_cancelled) return;
@@ -945,7 +1032,12 @@ void Sidebar::sync_filament_color()
             this->m_filament_color_sync_status->SetLabel(message);
         } else {
             wxString material_status;
-            if (this->sync_filament_material(result.filament.material, material_status)) {
+            const auto count = bundle.extruders_filaments.size();
+            if (result.declarations.schema_version == 2 && count == 8) {
+                this->sync_indx_filaments(result.declarations, material_status);
+            } else if (result.declarations.schema_version != 1 || count != 1) {
+                material_status = _L("INDX tool mapping does not match this printer; settings kept.");
+            } else if (this->sync_filament_material(result.filament.material, material_status)) {
                 Tab* tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
                 DynamicPrintConfig updated = *tab->get_config();
                 if (apply_loaded_filament_color(updated, result.filament)) {
@@ -1022,8 +1114,10 @@ void Sidebar::update_all_filament_comboboxes()
 
 void Sidebar::update_workflow_combobox_if_needed()
 {
-    PresetBundle &preset_bundle = *wxGetApp().preset_bundle;
+    // An online workflow update may arrive after tabs were removed on close.
     const Tab *tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+    if (!tab || !wxGetApp().preset_bundle) return;
+    PresetBundle &preset_bundle = *wxGetApp().preset_bundle;
     if (tab->is_prusa_printer() && tab->printer_model() == "SLX") {
         // lmTODO -> set correct items and selection
 

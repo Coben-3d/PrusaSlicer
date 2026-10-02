@@ -13,7 +13,8 @@ namespace Slic3r {
 enum class FilamentColorError { None, Authentication, Unsupported, Transport, InvalidResponse };
 struct FilamentColorResult {
     FilamentColorError error = FilamentColorError::None;
-    LoadedFilamentColor filament;
+    LoadedFilamentColor filament; // Legacy MK4 callers.
+    LoadedFilaments declarations;
 };
 using FilamentColorCallback = std::function<void(FilamentColorResult)>;
 

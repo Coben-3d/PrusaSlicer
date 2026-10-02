@@ -54,7 +54,7 @@ public:
     }
     int FilterEvent(wxEvent& event) override
     {
-        if (m_started && (m_mode == "material_cancel" || m_mode == "material_ambiguous") &&
+        if (m_started && (m_mode == "material_cancel" || m_mode == "material_ambiguous" || m_mode == "indx_dirty_cancel") &&
             event.GetEventType() == wxEVT_INIT_DIALOG) {
             if (auto* dialog = dynamic_cast<wxDialog*>(event.GetEventObject())) {
                 m_dialog_cancelled = true;
@@ -91,7 +91,7 @@ public:
         }
         // Initialize the normal background-process temp path before closing an empty model.
         app.plater()->update(static_cast<unsigned int>(Plater::UpdateParams::FORCE_BACKGROUND_PROCESSING_UPDATE));
-        if (m_mode == "material_keep" || m_mode == "material_cancel") {
+        if (m_mode == "material_keep" || m_mode == "material_cancel" || m_mode == "indx_keep" || m_mode == "indx_dirty_cancel") {
             auto tuned = *app.get_tab(Preset::TYPE_FILAMENT)->get_config();
             tuned.set_key_value("temperature", new ConfigOptionInts({233}));
             app.get_tab(Preset::TYPE_FILAMENT)->load_config(tuned);
@@ -119,17 +119,17 @@ public:
     {
         const auto elapsed = std::chrono::steady_clock::now() - m_start;
         if (elapsed > std::chrono::seconds(12)) { finish(false, "GUI timeout"); return; }
-        if ((m_mode == "stale" || m_mode == "material_stale") && !m_stale_edit_done) {
+        if ((m_mode == "stale" || m_mode == "material_stale" || m_mode == "indx_stale") && !m_stale_edit_done) {
             // The test server signals receipt, so this exercises a truly late response.
             if (m_request_seen.empty() || !std::filesystem::exists(m_request_seen)) return;
             auto& app = wxGetApp();
             auto updated = *app.get_tab(Preset::TYPE_PRINTER)->get_config();
-            updated.set_key_value("extruder_colour", new ConfigOptionStrings({"#00FF00"}));
+            updated.set_key_value("extruder_colour", new ConfigOptionStrings(m_mode == "indx_stale" ? std::vector<std::string>{"#0000FF", "#0000FF", "#0000FF", "#00FF00", "#0000FF", "#0000FF", "#0000FF", "#0000FF"} : std::vector<std::string>{"#00FF00"}));
             app.get_tab(Preset::TYPE_PRINTER)->load_config(updated);
             app.plater()->on_config_change(updated);
             m_stale_edit_done = true;
         }
-        if ((m_mode == "stale" || m_mode == "material_stale") && elapsed < std::chrono::seconds(3)) return;
+        if ((m_mode == "stale" || m_mode == "material_stale" || m_mode == "indx_stale") && elapsed < std::chrono::seconds(3)) return;
         if (!m_button->IsEnabled()) return;
         for (wxWindow* window : wxTopLevelWindows)
             if (auto* dialog = dynamic_cast<wxDialog*>(window); dialog && dialog->IsModal()) return;
@@ -137,7 +137,35 @@ public:
         const auto diff = after.diff(m_before);
         const auto color = after.option<ConfigOptionStrings>("extruder_colour")->values.front();
         bool success;
-        if (m_mode.compare(0, 9, "material_") == 0) {
+        if (m_mode.compare(0, 5, "indx_") == 0) {
+            const auto& bundle = *wxGetApp().preset_bundle;
+            const auto& colors = after.option<ConfigOptionStrings>("extruder_colour")->values;
+            const std::vector<std::string> expected_rgb = {"#000000", "#FFFFFF", "#FF0000", "#00FF00", "#FFFF00", "#00FFFF", "#800080", "#123456"};
+            if (m_mode == "indx_wrong" || m_mode == "indx_bad" || m_mode == "indx_mapping" || m_mode == "indx_dirty_cancel") {
+                success = after == m_before && bundle.filaments.get_edited_preset().config == m_filament_before;
+                if (m_mode == "indx_dirty_cancel") success &= m_dialog_cancelled;
+            } else if (m_mode == "indx_stale") {
+                success = diff == std::vector<std::string>{"extruder_colour"} && colors.size() == 8 && colors[3] == "#00FF00";
+            } else {
+                success = colors.size() == 8 && bundle.extruders_filaments.size() == 8 &&
+                    bundle.prints.get_edited_preset().config == m_print_before &&
+                    bundle.printers.get_edited_preset().config.diff(m_printer_before) == std::vector<std::string>{"extruder_colour"};
+                for (size_t i = 0; i < 8 && success; ++i) {
+                    const bool kept_color = m_mode == "indx_partial" && (i == 2 || i == 4 || i == 6);
+                    const bool petg = i % 2 || (m_mode == "indx_partial" && (i == 2 || i == 4)) || (m_mode == "indx_keep" && i == 0);
+                    const auto name = std::string(petg ? "Generic PETG" : "Generic PLA") + " @COREONEINDX HF0.4";
+                    const auto* expected = bundle.filaments.find_preset(name, false);
+                    const auto selected = bundle.extruders_filaments[i].get_selected_preset_name();
+                    success &= expected && selected == name && colors[i] == (kept_color ? "#0000FF" : expected_rgb[i]);
+                    const auto* actual_type = after.option<ConfigOptionStrings>("filament_type");
+                    success &= actual_type && actual_type->values.at(i) == (petg ? "PETG" : "PLA");
+                    const auto* actual_temp = after.option<ConfigOptionInts>("temperature");
+                    if (expected && actual_temp)
+                        success &= actual_temp->values.at(i) == (m_mode == "indx_keep" && petg ? 233 : expected->config.option<ConfigOptionInts>("temperature")->values.front());
+                }
+                if (m_mode == "indx_keep") success &= bundle.filaments.get_edited_preset().config == m_filament_before;
+            }
+        } else if (m_mode.compare(0, 9, "material_") == 0) {
             const auto& bundle = *wxGetApp().preset_bundle;
             if (m_mode == "material_switch" || m_mode == "material_unknown") {
                 const auto* expected = bundle.filaments.find_preset("Generic PLA @PGIS", false);

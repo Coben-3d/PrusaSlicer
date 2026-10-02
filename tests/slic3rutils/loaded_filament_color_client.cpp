@@ -44,6 +44,13 @@ int main(int argc, char** argv)
     nlohmann::json out = {{"error", int(result.error)},
         {"color", result.filament.color ? nlohmann::json(*result.filament.color) : nlohmann::json(nullptr)},
         {"material", result.filament.material ? nlohmann::json(*result.filament.material) : nlohmann::json(nullptr)}};
+    if (result.error == FilamentColorError::None && result.declarations.schema_version == 2) {
+        out = {{"error", 0}, {"schema_version", 2}, {"slots", nlohmann::json::array()}};
+        for (const auto& slot : result.declarations.slots)
+            out["slots"].push_back({{"slot", slot.slot}, {"enabled", slot.enabled}, {"loaded", slot.loaded},
+                {"material", slot.filament.material ? nlohmann::json(*slot.filament.material) : nlohmann::json(nullptr)},
+                {"color", slot.filament.color ? nlohmann::json(*slot.filament.color) : nlohmann::json(nullptr)}});
+    }
     std::cout << out.dump() << '\n';
     return 0;
 }

@@ -41,6 +41,7 @@ class ScalableButton;
 class ModeSizer;
 
 namespace Slic3r {
+struct LoadedFilaments;
 
 namespace GUI {
 
@@ -110,6 +111,7 @@ class Sidebar : public wxPanel
     void update_filament_color_sync_state();
     void sync_filament_color();
     bool sync_filament_material(const std::optional<std::string>& material, wxString& status);
+    bool sync_indx_filaments(const LoadedFilaments& filaments, wxString& status);
 
     wxButton*                           m_btn_full_spectrum { nullptr };
     std::unique_ptr<FreqChangedParams>  m_frequently_changed_parameters;

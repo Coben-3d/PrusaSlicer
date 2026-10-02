@@ -23,6 +23,24 @@ def declaration(color="#000000"):
         "color": color, "source": "user_declared"}]}
 
 
+INDX_COLORS = ["#000000", "#FFFFFF", "#FF0000", "#00FF00", "#FFFF00", "#00FFFF", "#800080", "#123456"]
+
+def indx_declaration(mode="indx_apply"):
+    slots = [{"slot": i, "virtual_tool": i, "enabled": True, "loaded": True,
+        "material": "PETG" if i % 2 else "PLA", "color": color, "source": "user_declared"}
+        for i, color in enumerate(INDX_COLORS)]
+    if mode == "indx_partial":
+        slots[2].update(enabled=False, loaded=False, material=None, color=None)
+        slots[4].update(loaded=False, material=None, color=None)
+        slots[6]["color"] = None
+        slots[7]["material"] = "NO_MATCH"
+    elif mode == "indx_keep": slots[0]["material"] = "PETG"
+    elif mode == "indx_shuffled": slots.reverse()
+    elif mode == "indx_bad": slots[4]["slot"] = 3
+    elif mode == "indx_mapping": slots[4]["virtual_tool"] = 3
+    return {"schema_version": 2, "printer_model": "COREONE_INDX", "indexing": "physical_tools", "tool_count": 8, "slots": slots}
+
+
 @pytest.fixture
 def server():
     seen = []
@@ -77,6 +95,9 @@ def server():
                 body = declaration("#FF0000")
             elif mode == "delayed": time.sleep(12)
             elif mode == "cancel": time.sleep(4)
+            elif mode.startswith("indx_"):
+                body = declaration() if mode == "indx_wrong" else indx_declaration(mode)
+                if mode == "indx_stale": time.sleep(2)
             elif mode == "redirect":
                 self.send_response(302)
                 self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/leaked/api/v1/filaments")
@@ -151,3 +172,15 @@ def test_offline():
     port = server.server_port
     server.server_close()
     assert request(f"http://127.0.0.1:{port}", "valid")["error"] == 3
+
+
+@pytest.mark.parametrize("endpoint", ["indx_apply", "indx_shuffled", "indx_partial"])
+def test_indx_http_slots(server, endpoint):
+    base, seen = server
+    result = request(base, endpoint)
+    assert result["error"] == 0 and result["schema_version"] == 2
+    assert [s["slot"] for s in result["slots"]] == list(range(8))
+    expected = sorted(indx_declaration(endpoint)["slots"], key=lambda s:s["slot"])
+    for i, slot in enumerate(result["slots"]):
+        assert slot == {k:v for k,v in expected[i].items() if k not in ("source", "virtual_tool")}
+    assert len(seen) == 1
