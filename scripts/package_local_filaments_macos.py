@@ -5,6 +5,8 @@ import configparser
 import hashlib
 import json
 from pathlib import Path
+import plistlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,7 +25,11 @@ Ouvrir quand même, puis la confirmation pour l’application concernée.
 
 Le paquet fournit les sources, les versions et les empreintes SHA-256.
 Cette distribution ne modifie pas les protections globales de macOS.
-Les deux lanceurs ouvrent des réglages séparés et bloquent le trousseau.
+Les deux lanceurs ouvrent des réglages séparés. La connexion Prusa Connect
+reste facultative et utilise le trousseau macOS normal lorsque vous vous connectez.
+Ouvrez « PrusaSlicer Filaments MK4.app » ou « PrusaSlicer Filaments INDX.app »
+dans le dossier extrait. Le raccourci de PrusaSlicer officiel n’ouvre pas cette
+version personnalisée et ne contient pas son bouton de synchronisation.
 '''
 
 
@@ -36,11 +42,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--keychain-guard', type=Path, required=True)
+    parser.add_argument('--release-version', default='0.2.0')
     parser.add_argument('--profiles', type=Path, required=True)
     parser.add_argument('--dependency-license-root', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    assert re.fullmatch(r'\d+\.\d+\.\d+', args.release_version)
     assert not args.output.exists(), 'Never replace an existing public archive'
     args.output.parent.mkdir(parents=True, exist_ok=True)
     vendor = configparser.ConfigParser(interpolation=None, strict=False)
@@ -66,17 +73,22 @@ def main():
          'Generic PLA @COREONEINDX HF0.4', 'Generic PETG @COREONEINDX HF0.4', 8),
     ]
     with tempfile.TemporaryDirectory(prefix='local-filaments-public-', dir=args.output.parent) as temp:
-        package = Path(temp) / 'PrusaSlicer-Local-Filaments-v0.1.0'
+        package = Path(temp) / ('PrusaSlicer-Local-Filaments-v' + args.release_version)
         app = package / 'slicer'
         (app / 'MacOS').mkdir(parents=True)
         shutil.copyfile(args.binary, app / 'MacOS/PrusaSlicer')
         (app / 'MacOS/PrusaSlicer').chmod(0o755)
-        shutil.copyfile(args.keychain_guard, app / 'deny_keychain.dylib')
         shutil.copytree(args.source / 'resources', app / 'Resources',
                         ignore=shutil.ignore_patterns('.DS_Store', '._*'))
         shutil.copyfile(args.source / 'LICENSE', package / 'LICENSE-PrusaSlicer-AGPLv3')
-        shutil.copyfile(args.source / 'doc/LOCAL-FILAMENTS.md', package / 'GUIDE-FR.md')
+        guide = (args.source / 'doc/LOCAL-FILAMENTS.md').read_text()
+        (package / 'GUIDE-FR.md').write_text(guide.replace('(LOCAL-FILAMENTS-VALIDATION.md)', '(VALIDATION.md)'))
         shutil.copyfile(args.source / 'doc/LOCAL-FILAMENTS-VALIDATION.md', package / 'VALIDATION.md')
+        for guide in ['INSTALL-MK4.md', 'INSTALL-COREONE-INDX.md']:
+            text = (args.source / 'doc' / guide).read_text()
+            text = text.replace('(LOCAL-FILAMENTS.md)', '(GUIDE-FR.md)')
+            text = text.replace('(LOCAL-FILAMENTS-VALIDATION.md)', '(VALIDATION.md)')
+            (package / guide).write_text(text)
         (package / 'MACOS-OUVERTURE.md').write_text(MACOS_OPENING)
         for subtree in ['bundled_deps']:
             for path in sorted((args.source / subtree).rglob('*')):
@@ -123,7 +135,7 @@ def main():
                 ''.join(k + ' = ' + v + '\n' for k, v in values.items()))
             text = ('version = 2.9.6\ntranslation_language = fr_FR\npreset_update = 0\n'
                     'notify_release = none\nauth_login_dialog_confirmed = 1\nshow_hints = 0\n'
-                    'connect_polling = 0\nsingle_instance = 0\nno_defaults = 0\n'
+                    'connect_polling = 1\nsingle_instance = 1\nno_defaults = 0\n'
                     '[presets]\nprinter = ' + name + '\nprint = ' + print_name + '\n')
             for index in range(count):
                 text += 'filament' + ('_' + str(index) if index else '') + ' = ' + pla + '\n'
@@ -134,14 +146,40 @@ def main():
             launcher = package / ('Lancer-PrusaSlicer-' + short + '.command')
             launcher.write_text(
                 '#!/bin/zsh\nset -eu\ntask_package_dir=${0:A:h}\n'
-                'export DYLD_INSERT_LIBRARIES="$task_package_dir/slicer/deny_keychain.dylib"\n'
+                'unset DYLD_INSERT_LIBRARIES\n'
                 'exec "$task_package_dir/slicer/MacOS/PrusaSlicer" '
-                '--datadir "$task_package_dir/settings-' + short.lower() + '"\n')
+                '--datadir "$task_package_dir/settings-' + short.lower() + '" --single-instance\n')
             launcher.chmod(0o755)
             subprocess.run(['zsh', '-n', str(launcher)], check=True)
+            bundle = package / ('PrusaSlicer Filaments ' + short + '.app')
+            (bundle / 'Contents/MacOS').mkdir(parents=True)
+            (bundle / 'Contents/Resources').mkdir()
+            wrapper = bundle / 'Contents/MacOS/PrusaSlicer-Filaments'
+            wrapper.write_text(
+                '#!/bin/zsh\nset -eu\ntask_package_dir=${0:A:h:h:h:h}\n'
+                'unset DYLD_INSERT_LIBRARIES\n'
+                'exec "$task_package_dir/slicer/MacOS/PrusaSlicer" '
+                '--datadir "$task_package_dir/settings-' + short.lower() + '" --single-instance\n')
+            wrapper.chmod(0o755)
+            subprocess.run(['zsh', '-n', str(wrapper)], check=True)
+            shutil.copyfile(args.source / 'resources/icons/PrusaSlicer.icns',
+                            bundle / 'Contents/Resources/PrusaSlicer.icns')
+            (bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleIdentifier': 'org.coben3d.prusaslicer.filaments.' + short.lower(),
+                'CFBundleName': 'PrusaSlicer Filaments ' + short,
+                'CFBundleDisplayName': 'PrusaSlicer Filaments ' + short,
+                'CFBundleExecutable': wrapper.name,
+                'CFBundleIconFile': 'PrusaSlicer.icns',
+                'CFBundlePackageType': 'APPL',
+                'CFBundleShortVersionString': '2.9.6',
+                'CFBundleVersion': args.release_version,
+                'LSMinimumSystemVersion': '26.2',
+                'NSHighResolutionCapable': True,
+            }))
 
         manifest = {
             'version': 'PrusaSlicer-2.9.6+FilamentLocal-INDX',
+            'package_release': args.release_version,
             'platform': 'macOS', 'architecture': 'arm64', 'minimum_macos': '26.2',
             'code_commit': 'b05b5ae4bba0372a7c69138ab48a6a093741a46e',
             'source_url': 'https://github.com/Coben-3d/PrusaSlicer/tree/feature/indx-local-filaments',
@@ -149,7 +187,8 @@ def main():
             'prusa_research_version': '2.5.10',
             'profiles_commit': '65c5c8f1e1c3836f306119c49d717759cbc368db',
             'personal_settings_included': False, 'credentials_included': False,
-            'keychain_blocked_by_launchers': True,
+            'keychain_blocked_by_launchers': False,
+            'connect_polling_enabled': True,
         }
         (package / 'package-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         (package / 'licenses/README.md').write_text(

@@ -1,13 +1,13 @@
 # CORE One + INDX : détails du portage
 
-Pour installer et utiliser le prototype, voir [le guide commun](LOCAL-FILAMENTS.md).
+Pour installer et utiliser le prototype, voir [le guide INDX](INSTALL-COREONE-INDX.md) et [le guide commun](LOCAL-FILAMENTS.md).
 Le fonctionnement sur la machine de l’auteur a été confirmé le 2 octobre 2026 ;
 les limites de cette confirmation sont dans [la validation](LOCAL-FILAMENTS-VALIDATION.md).
 
 ## Base et indices
 
 Base officielle 6.9.1 : `f1a123aba502bf8b043fcd9c779ee20b9253a62e`.
-Firmware du projet : `6.9.1-color+1`, cible `COREONE_INDX`, carte `XBUDDY`.
+Firmware du projet : `6.9.1-color+3`, cible `COREONE_INDX`, carte `XBUDDY`.
 Slicer : 2.9.6, modèle `COREONE_INDX8T`, huit lignes et huit buses, sans MMU.
 Les indices physiques, virtuels et G-code restent des types distincts.
 Les conversions officielles sont utilisées ; le contrat v2 accepte la
@@ -62,7 +62,7 @@ Ses programmes `fw-indx_head.bin`, `fw-tool_offset_sensor.bin` et
 `fw-xbuddy-extension.bin` sont identiques octet pour octet à ceux de l’officiel 6.9.1.
 
 Pour reconstruire cette variante, suivre le README amont et conserver la cible,
-GCC ARM 13.3.1, Release, le suffixe `-color+1` et `BUILD_NUMBER=1`.
+GCC ARM 13.3.1, Release, le suffixe `-color+3` et `BUILD_NUMBER=3`.
 Fournir les trois programmes secondaires officiels 6.9.1 via
 `INDX_HEAD_BINARY_PATH`, `TOOL_OFFSET_SENSOR_BINARY_PATH` et
 `XBUDDY_EXTENSION_BINARY_PATH`. Une recompilation avec d’autres programmes
@@ -71,3 +71,12 @@ secondaires ne reproduit pas le paquet publié.
 À chaque mise à jour Prusa, revoir types et correspondances de têtes,
 opérations de chargement, journal, contrat HTTP et profils Slicer.
 INDX 4T et les autres modèles ne sont pas validés par ce portage.
+
+## Publication actuelle
+
+La release v0.2.0 fournit color+3 : [palette](https://github.com/Coben-3d/Prusa-Firmware-Buddy/blob/feature/coreone-indx-loaded-filament-colors/doc/INDX-COLOR-PALETTE.md) et
+[correction directe](https://github.com/Coben-3d/Prusa-Firmware-Buddy/blob/feature/coreone-indx-loaded-filament-colors/doc/INDX-FILAMENT-COLOR-EDIT.md). L’auteur a rapporté le
+fonctionnement global ; les limites sont dans la validation. Le Slicer est une
+application personnalisée complète, commune à MK4 et INDX, avec Connect facultatif.
+Fichier public : `COREONE_INDX_6.9.1-color+3.bbf`, identique au BBF color+3
+préparé localement ; version et source exacte figurent dans le manifeste.

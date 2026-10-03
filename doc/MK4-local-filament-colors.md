@@ -23,5 +23,9 @@ Les scénarios GUI et HTTP se trouvent dans `tests/slic3rutils`.
 
 La distribution macOS est générée par `scripts/package_local_filaments_macos.py`.
 Elle copie uniquement le binaire, les ressources de sources, les licences,
-le blocage du trousseau et le catalogue officiel fourni. Elle construit des
+les lanceurs et le catalogue officiel fourni. Elle construit des
 réglages neufs sans consulter les réglages personnels.
+
+Le paquet v0.2.0 utilise le trousseau macOS normal et active le polling Connect.
+Les lanceurs `.app` et `.command` exécutent le même binaire avec des réglages
+MK4 et INDX séparés. Voir les guides [MK4](INSTALL-MK4.md) et [INDX](INSTALL-COREONE-INDX.md).
