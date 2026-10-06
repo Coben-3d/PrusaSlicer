@@ -5,12 +5,12 @@ import configparser
 import hashlib
 import json
 from pathlib import Path
-import plistlib
 import re
 import shutil
 import subprocess
 import tempfile
 import zipfile
+from local_filaments_macos_launcher import build_launcher
 
 MACOS_OPENING = '''# Ouverture du prototype sur macOS
 
@@ -30,6 +30,27 @@ reste facultative et utilise le trousseau macOS normal lorsque vous vous connect
 Ouvrez « PrusaSlicer Filaments MK4.app » ou « PrusaSlicer Filaments INDX.app »
 dans le dossier extrait. Le raccourci de PrusaSlicer officiel n’ouvre pas cette
 version personnalisée et ne contient pas son bouton de synchronisation.
+
+Depuis v0.2.1, les `.app` ont un exécutable principal natif signé ad hoc,
+un UUID propre à chaque variante et une description d’accès au réseau local.
+Autorisez « PrusaSlicer Filaments MK4 » ou « PrusaSlicer Filaments INDX » si
+macOS demande cet accès pour joindre votre imprimante. Le lanceur reste actif
+pendant la session Slicer ; quittez Slicer par son menu pour fermer la session.
+
+Si la page PrusaLink fonctionne dans le navigateur, mais que « Tester » et la
+synchronisation échouent : Réglages Système → Confidentialité et sécurité →
+Réseau local, puis vérifier l’autorisation du lanceur concerné. Les `.app`
+v0.2.0 utilisaient un script comme exécutable principal ; une boucle
+d’autorisation a été observée et résolue par le lanceur natif sur le Mac de
+l’auteur. Prenez v0.2.1 et importez vos profils après avoir enregistré et quitté
+l’ancienne session. Aucun nouveau flash n’est requis pour ce correctif.
+
+Les lanceurs `.command`, ouverts depuis Terminal, restent une alternative.
+Apple précise que ces processus et leurs enfants sont autorisés à utiliser
+le réseau local. Une signature ad hoc n’apporte pas les garanties de suivi
+d’identité d’un certificat Apple ; cette distribution n’en possède pas.
+Source : https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy
+Réglage : https://support.apple.com/fr-fr/guide/mac-help/mchla4f49138/mac
 '''
 
 
@@ -42,7 +63,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--release-version', default='0.2.0')
+    parser.add_argument('--release-version', default='0.2.1')
     parser.add_argument('--profiles', type=Path, required=True)
     parser.add_argument('--dependency-license-root', type=Path)
     parser.add_argument('--output', type=Path, required=True)
@@ -112,6 +133,7 @@ def main():
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(path, destination)
 
+        launcher_metadata = []
         for short, model, variant, parent, name, print_name, pla, petg, count in specifications:
             settings = package / ('settings-' + short.lower())
             (settings / 'printer').mkdir(parents=True)
@@ -151,35 +173,17 @@ def main():
                 '--datadir "$task_package_dir/settings-' + short.lower() + '" --single-instance\n')
             launcher.chmod(0o755)
             subprocess.run(['zsh', '-n', str(launcher)], check=True)
-            bundle = package / ('PrusaSlicer Filaments ' + short + '.app')
-            (bundle / 'Contents/MacOS').mkdir(parents=True)
-            (bundle / 'Contents/Resources').mkdir()
-            wrapper = bundle / 'Contents/MacOS/PrusaSlicer-Filaments'
-            wrapper.write_text(
-                '#!/bin/zsh\nset -eu\ntask_package_dir=${0:A:h:h:h:h}\n'
-                'unset DYLD_INSERT_LIBRARIES\n'
-                'exec "$task_package_dir/slicer/MacOS/PrusaSlicer" '
-                '--datadir "$task_package_dir/settings-' + short.lower() + '" --single-instance\n')
-            wrapper.chmod(0o755)
-            subprocess.run(['zsh', '-n', str(wrapper)], check=True)
-            shutil.copyfile(args.source / 'resources/icons/PrusaSlicer.icns',
-                            bundle / 'Contents/Resources/PrusaSlicer.icns')
-            (bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps({
-                'CFBundleIdentifier': 'org.coben3d.prusaslicer.filaments.' + short.lower(),
-                'CFBundleName': 'PrusaSlicer Filaments ' + short,
-                'CFBundleDisplayName': 'PrusaSlicer Filaments ' + short,
-                'CFBundleExecutable': wrapper.name,
-                'CFBundleIconFile': 'PrusaSlicer.icns',
-                'CFBundlePackageType': 'APPL',
-                'CFBundleShortVersionString': '2.9.6',
-                'CFBundleVersion': args.release_version,
-                'LSMinimumSystemVersion': '26.2',
-                'NSHighResolutionCapable': True,
-            }))
+            launcher_metadata.append(build_launcher(
+                package, short, args.source / 'resources/icons/PrusaSlicer.icns',
+                args.release_version, Path(temp) / 'native-build'))
 
+        assert len({entry['uuid'] for entry in launcher_metadata}) == len(specifications)
         manifest = {
             'version': 'PrusaSlicer-2.9.6+FilamentLocal-INDX',
             'package_release': args.release_version,
+            'package_source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=args.source, text=True).strip(),
+            'native_launchers': launcher_metadata,
+            'local_network_usage_description_included': True,
             'platform': 'macOS', 'architecture': 'arm64', 'minimum_macos': '26.2',
             'code_commit': 'b05b5ae4bba0372a7c69138ab48a6a093741a46e',
             'source_url': 'https://github.com/Coben-3d/PrusaSlicer/tree/feature/indx-local-filaments',
